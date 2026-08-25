@@ -1896,6 +1896,11 @@ def register(ctx):
         env_enablement_fn=_env_enablement,
         allowed_users_env="ZULIP_ALLOWED_USERS",
         allow_all_env="ZULIP_ALLOW_ALL_USERS",
+        # Lets Hermes cron accept ``deliver: zulip[:<stream_id>]`` targets.
+        # Without this, cron preflight rejects the job as "not a known cron
+        # delivery target" and never runs it. The env var supplies the default
+        # stream when no explicit id is given.
+        cron_deliver_env_var="ZULIP_HOME_CHANNEL",
         # Out-of-process delivery (``hermes cron run``, cron in its own
         # process): without this, Hermes has no way to send to Zulip when no
         # gateway adapter is live and reports "No live adapter for platform".
