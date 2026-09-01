@@ -222,6 +222,20 @@ async def upload_file_to_zulip(
 
     if uri.startswith("/"):
         base = getattr(client, "base_url", "")
+        # client.base_url (python-zulip-api) always ends in "/api/" (see
+        # zulip.Client.__init__: it strips trailing slashes then
+        # unconditionally appends "/api/"), and the upload endpoint's own
+        # `uri` in the response is server-root-relative (e.g.
+        # "/user_uploads/..."), NOT api-relative. Concatenating the two
+        # verbatim produces "https://host/api//user_uploads/..." — a
+        # double slash that 404s. Strip the "/api/" (or "/api") suffix so
+        # we land back at the server root before appending uri.
+        if base.endswith("/api/"):
+            base = base[: -len("/api/")]
+        elif base.endswith("/api"):
+            base = base[: -len("/api")]
+        else:
+            base = base.rstrip("/")
         uri = base + uri
 
     return uri
