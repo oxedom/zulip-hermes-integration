@@ -2,6 +2,7 @@
 
 from pathlib import Path
 from unittest.mock import MagicMock, patch
+import tempfile
 
 import pytest
 
@@ -218,6 +219,63 @@ class TestUploadFileToZulip:
 
         # Restore tempdir
         tempfile.tempdir = original_temp
+
+    @pytest.mark.asyncio
+    async def test_allow_dirs_env_permits_extra_root(self, tmp_path, monkeypatch):
+        """HERMES_MEDIA_ALLOW_DIRS mirrors gateway.platforms.base's operator
+        allowlist env var of the same name — a dir listed there must be
+        accepted even when it's outside both system temp and HERMES_DATA_DIR
+        (e.g. browser-harness's screenshot cache under ~/.config)."""
+        from zulip.media import upload_file_to_zulip
+
+        data_dir = tmp_path / "data"
+        data_dir.mkdir()
+        extra_root = tmp_path / "browser-harness" / "tmp"
+        extra_root.mkdir(parents=True)
+        screenshot = extra_root / "shot.png"
+        screenshot.write_bytes(b"\x89PNG")
+
+        monkeypatch.setenv("HERMES_MEDIA_ALLOW_DIRS", str(extra_root))
+
+        mock_client = MagicMock()
+        mock_client.upload_file.return_value = {"result": "success", "uri": "/user_uploads/1/shot.png"}
+        mock_client.base_url = "https://z.com"
+
+        url = await upload_file_to_zulip(mock_client, str(screenshot), str(data_dir))
+        assert url == "https://z.com/user_uploads/1/shot.png"
+        mock_client.upload_file.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_allow_dirs_env_does_not_widen_beyond_listed_root(self, tmp_path, monkeypatch):
+        """A sibling directory not itself listed in HERMES_MEDIA_ALLOW_DIRS
+        must still be rejected — the allowlist is exact-root, not a prefix
+        guess across the whole parent tree."""
+        from zulip.media import upload_file_to_zulip
+
+        # Isolate from the real system temp dir (same technique as
+        # test_rejects_path_outside_allowed above) so this sibling path
+        # isn't accidentally covered by the always-allowed tmp_dir root.
+        original_temp = tempfile.tempdir
+        tempfile.tempdir = str(tmp_path / "other_temp")
+
+        data_dir = tmp_path / "data"
+        data_dir.mkdir()
+        allowed_root = tmp_path / "allowed"
+        allowed_root.mkdir()
+        sibling = tmp_path / "allowed-but-not-really"
+        sibling.mkdir()
+        outside = sibling / "secret.txt"
+        outside.write_text("nope")
+
+        monkeypatch.setenv("HERMES_MEDIA_ALLOW_DIRS", str(allowed_root))
+
+        mock_client = MagicMock()
+        try:
+            with pytest.raises(ValueError, match="unauthorized path"):
+                await upload_file_to_zulip(mock_client, str(outside), str(data_dir))
+            mock_client.upload_file.assert_not_called()
+        finally:
+            tempfile.tempdir = original_temp
 
     @pytest.mark.asyncio
     async def test_rejects_nonexistent_file(self, tmp_path):
